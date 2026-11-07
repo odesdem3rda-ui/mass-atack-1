@@ -46,24 +46,53 @@
     $id('aa-close').onclick = function () { box.remove(); };
 
     // ---------- Grupos ----------
-    $.get(game_data.link_base_pure + 'overview_villages&ajax=load_group_menu', function (data) {
+    function fillGroups(list) {
         var sel = $id('aa-group');
         sel.innerHTML = '';
-        var list = (data && data.result) ? data.result : [];
-        if (!list.length) {
-            sel.innerHTML = '<option value="0">Todas</option>';
-            return;
-        }
+        var added = 0;
         list.forEach(function (g) {
-            if (g.type === 'separator') return;
+            if (g.type === 'separator' || g.group_id === undefined) return;
             var o = document.createElement('option');
             o.value = g.group_id;
-            o.textContent = g.name;
+            o.textContent = String(g.name).replace(/^\s*[\[\(]|[\]\)]\s*$/g, '').trim() || g.name;
             sel.appendChild(o);
+            added++;
         });
-    }, 'json').fail(function () {
-        $id('aa-group').innerHTML = '<option value="0">Todas</option>';
-    });
+        if (!added) {
+            sel.innerHTML = '<option value="0">Todas</option>';
+        }
+    }
+
+    function fallbackGroups() {
+        // Plano B: ler os grupos da página de grupos
+        $.get(game_data.link_base_pure + 'overview_villages&mode=groups&type=static', function (html) {
+            var doc = $('<div>').append($.parseHTML(html));
+            var list = [], seen = {};
+            doc.find('[data-group-id], a[href*="group="]').each(function () {
+                var el = $(this);
+                var id = el.attr('data-group-id') || (String(el.attr('href')).match(/group=(\d+)/) || [])[1];
+                var name = $.trim(el.text());
+                if (id && name && !seen[id]) { seen[id] = 1; list.push({ group_id: id, name: name }); }
+            });
+            if (!list.length) {
+                $('.group-menu-item, [data-group-id]').each(function () {
+                    var el = $(this);
+                    var id = el.attr('data-group-id');
+                    var name = $.trim(el.text());
+                    if (id && name && !seen[id]) { seen[id] = 1; list.push({ group_id: id, name: name }); }
+                });
+            }
+            fillGroups(list);
+        }).fail(function () { fillGroups([]); });
+    }
+
+    $.get(game_data.link_base_pure + 'groups&mode=overview&ajax=load_group_menu', function (data) {
+        if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch (e) { data = null; }
+        }
+        var list = (data && data.result) ? data.result : [];
+        if (list.length) { fillGroups(list); } else { fallbackGroups(); }
+    }).fail(fallbackGroups);
 
     // ---------- Utilitários ----------
     function shuffle(arr) {
@@ -163,9 +192,18 @@
                 b.textContent = 'Abrir ' + (start + 1) + '-' + end;
                 b.onclick = function () {
                     var delay = Math.max(0, parseInt($id('aa-delay').value, 10) || 0);
+                    var blocked = false;
                     for (var k = start; k < end; k++) {
                         (function (idx, n) {
-                            setTimeout(function () { window.open(buildUrl(plan[idx]), '_blank'); }, n * delay);
+                            setTimeout(function () {
+                                var w = window.open(buildUrl(plan[idx]), '_blank');
+                                if (!w && !blocked) {
+                                    blocked = true;
+                                    $id('aa-info').innerHTML = '<b style="color:#a00">O Chrome bloqueou os pop-ups.</b> ' +
+                                        'Clica no ícone de pop-up bloqueado na barra de endereço, escolhe "Permitir sempre pop-ups" ' +
+                                        'para este site e carrega outra vez no botão. Ou abre cada ataque pelos links "abrir" da lista.';
+                                }
+                            }, n * delay);
                         })(k, k - start);
                     }
                     b.disabled = true;
@@ -175,11 +213,12 @@
             })(s);
         }
 
-        var html = '<table class="vis" style="width:100%"><tr><th>#</th><th>Origem</th><th>Destino</th><th>Tropas</th></tr>';
+        var html = '<table class="vis" style="width:100%"><tr><th>#</th><th>Origem</th><th>Destino</th><th>Tropas</th><th></th></tr>';
         plan.forEach(function (p, i) {
             var tr = Object.keys(p.village.troops).map(function (u) { return u + ':' + p.village.troops[u]; }).join(' ');
             html += '<tr><td>' + (i + 1) + '</td><td>' + p.village.x + '|' + p.village.y +
-                '</td><td>' + p.target.x + '|' + p.target.y + '</td><td style="font-size:10px">' + tr + '</td></tr>';
+                '</td><td>' + p.target.x + '|' + p.target.y + '</td><td style="font-size:10px">' + tr +
+                '</td><td><a href="' + buildUrl(p) + '" target="_blank">abrir</a></td></tr>';
         });
         html += '</table>';
         $id('aa-list').innerHTML = html;
